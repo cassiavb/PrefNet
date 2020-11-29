@@ -4,9 +4,8 @@ Go to a suitable location and clone repository:
 
 ```
 git clone https://github.com/cassiavb/PrefNet.git
-cd PrefNet
 PrefNet=`pwd`
-
+cd $PrefNet
 ```
 
 ## Installation of Python dependencies with virtual environment
@@ -29,19 +28,19 @@ pip install -r ./requirements.txt
 
 Pre-trained models can be found in [models/](models/)
 
-## Predict preference from two wavefiles using pre-trained models
+## Predict preference from two wavefiles using a pre-trained model
 
 ```
 ./util/submit_tf.sh scripts/predict.py -c config/example.cfg -i1 file1.wav -i2 file2.wav
 ```
 
-## Train model
+## Train new model
 
 ```
 ./util/submit_tf.sh scripts/train.py -c config/example.cfg
 ```
 
-## Calculate accuracy
+## Calculate model's accuracy on testset
 
 ```
 ./util/submit_tf.sh scripts/test.py -c config/example.cfg
@@ -53,13 +52,13 @@ Data from Exp1-7 in the expected format can be found [here](http://data.cstr.ed.
 
 ### Wavfiles 
 
-Should be located in:
+Should be located in (all files should be sampled at 16kHz):
 
 data_dir/processed/wav16k/
 
-should be named: EXXX___sentence___system.wav  
+all files should be named following: EXXX___sentence___system.wav  
 
-XXX is a unique number that identifies the experiment (listening test)
+XXX is a unique number that identifies the experiment (listening test).
 
 ### Score files (one file per experiment) 
 
