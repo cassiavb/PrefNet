@@ -4,8 +4,7 @@ Go to a suitable location and clone repository:
 
 ```
 git clone https://github.com/cassiavb/PrefNet.git
-PrefNet=`pwd`
-cd $PrefNet
+cd PrefNet
 ```
 
 ## Installation of Python dependencies with virtual environment
