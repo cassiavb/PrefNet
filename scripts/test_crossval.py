@@ -33,10 +33,10 @@ def test_configuration(config):
     data_dir   = config['data_dir']
     model_name = config['model_name']
     model_type = config['model_type']
+    train_list_file = config['train_list_file']
     test_list_file = config['test_list_file']
     model_dir  = config['model_dir']
     extract_features = config.get('extract_features', False)
-    test_asone = config.get('test_asone', False)
 
     # Creating output directories
     if not os.path.exists(data_dir):
@@ -44,26 +44,58 @@ def test_configuration(config):
     if not os.path.exists(model_dir):
         os.makedirs(model_dir)
 
-    ## Check if model exists
-    model_file = '{0}/{1}'.format(config['model_dir'], config['model_name'])
+    # Partitioning train data
+    if config.get('crossval',False) == False:
+        num_folds    = 1
+        fold_indexes = -1
+    else: # leave-one-fold-out cross validation
+        fold_indexes = config.get('fold_indexes',[1])
+        fold_indexes = np.asarray(fold_indexes)
+        num_folds    = np.minimum( config.get('num_folds', 1) , len(fold_indexes) )
 
-    if not os.path.isfile(model_file):
-        raise ValueError('Model does not exist!')
-    
-    # Load model data
-    print("Loading model: {0}".format(model_file))
-    model = architectures.gru_and_attention_model( config , vocdim = config['n_mels'])
-    model.load_weights(model_file)
+    start_fold     = 0
+    accuracy_folds = np.zeros( (2, num_folds ))
 
+    ## Getting list of experiments to be used for training and testing
+    exp_list_train = read_file_to_list( train_list_file )
+    exp_list_test  = read_file_to_list( test_list_file ) # is used if there is no leave-one-fold-out cross validation
 
-    # Getting list of experiments to be used for testing
-    test_list  = read_file_to_list( test_list_file )
+    for fold in range(num_folds):
 
-    for test in test_list:
+        ## Check if model exists
+        if num_folds == 1: # if only one fold dont add fold number to model name
+            model_file = '{0}/{1}'.format(config['model_dir'], config['model_name'])
+        else:
+            model_file = '{0}/{1}_{2}'.format(config['model_dir'], fold, config['model_name'])
 
-        test = [test]
-        if test_asone:
-            test = test_list
+        if not os.path.isfile(model_file):
+            raise ValueError('Model does not exist!')
+        
+        # Load model data
+        print("Loading model: {0}".format(model_file))
+        model = architectures.gru_and_attention_model( config , vocdim = config['n_mels'])
+        model.load_weights(model_file)
+
+        ## Getting test and train set for this fold
+        if num_folds == 1 and config.get('crossval',False) == False:
+            test_list  = exp_list_test
+            train_list = exp_list_train
+        else:
+            test_list  = exp_list_train[ start_fold: fold_indexes[fold]+1 ]
+            train_list = [item for item in exp_list_train if item not in test_list]
+            if test_on_train:
+                print("------------ test_on_train ------------")
+                tmp = test_list
+                test_list = train_list
+                train_list = tmp
+            start_fold = fold_indexes[fold] + 1
+
+        print("Train list:")
+        print(train_list)
+        print("Test list:")
+        print(test_list)
+
+        test = test_list
 
         print(f"############### Test {test}")
         if extract_features:
@@ -135,31 +167,31 @@ def test_configuration(config):
                 #print("-- {} {:.2f} {:.2f}".format(key, scores_sys[key], actual_scores_sys[key],))
 
         accuracy_sys = 100*corr_pairs/num_pairs
-        #print("------ System accuracy: {:.1f}".format(accuracy_sys))
-        #print("Num system pairs: " + str(num_pairs))
+        # print("------ System accuracy: {:.1f}".format(100*corr_pairs/num_pairs))
+        # print("Num system pairs: " + str(num_pairs))
 
         # Calculate accuracy over the entire test set
         accuracy_pair = calculate_accuracy(scores_test.copy(), out.copy(), 'pair')
         accuracy_resp = calculate_accuracy(scores_test.copy(), out.copy(), 'response')
 
-        #print("----- Sentence accuracy: {:.1f}".format(accuracy))
-        #print("Num sentence pairs: " + str(len(out)))
+        # print("----- Sentence accuracy: {:.1f}".format(accuracy))
+        # print("Num sentence pairs: " + str(len(out)))
 
         print("{:.1f} / {:.1f} / {:.1f}".format(accuracy_resp,accuracy_pair,accuracy_sys))
-        if test_asone:
-            break
-            
+
 if __name__=="__main__":
 
     print("Reading arguments")
 
     a = ArgumentParser()
     a.add_argument('-c', dest='config_fname', required=True)
+    a.add_argument('-t', dest='test_on_train', action='store_true', help= "adapt model")
     opts       = a.parse_args()
     config     = {}
 
     #### Get config settings
     config = load_config(opts.config_fname)
+    test_on_train = opts.test_on_train
 
     test_configuration(config)
 

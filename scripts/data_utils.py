@@ -17,20 +17,32 @@ import datetime
 
 scores_dir = '/processed/scores/'
 
-def calculate_accuracy(scores_orig, out_orig):
+def calculate_accuracy(scores_orig, out_orig, level='pair'):
 
     scores = scores_orig
     out    = out_orig
 
-    scores[scores<=0.5] = 0.0
-    scores[scores>0.5] = 1.0
+    if level=='pair': # pair level accuracy
 
-    out[out<=0.5] = 0.0
-    out[out>0.5] = 1.0
+        scores[scores<=0.5] = 0.0
+        scores[scores>0.5] = 1.0
 
-    num_correct = sum(scores==out)
+        out[out<=0.5] = 0.0
+        out[out>0.5] = 1.0
 
-    return float(100.0*num_correct / len(scores))
+        num_correct = sum(scores==out)
+
+        return float(100.0*num_correct / len(scores))
+
+    else: # response level
+
+        # out is predicted, scores are the actual responses
+
+        # flip results according to scores
+        out[scores<=0.5] = 1-out[scores<=0.5]
+        scores[scores<=0.5] = 1-scores[scores<=0.5]
+
+        return 100.0* np.mean( np.minimum( scores, out))
 
 def divide_data(wavs1, wavs2, len1, len2, scores):
 
@@ -230,4 +242,30 @@ def load_data_features(config, exp_list):
 
     return feats1, feats2, len1, len2, scores, max_length, files1, files2
 
+
+def get_scores(config, pairs, max_score=False):
+
+    scores = np.zeros(len(pairs), dtype=np.float)
+
+    for idx, pair in enumerate(pairs):
+
+        wav1, wav2, score, file1, file2 = get_pair_wavs_score(config, pair)
+
+        if max_score and score<0.5:
+            score = 1-score
+
+        scores[idx] = score
+
+    return scores
+
+def load_scores(data_dir, exp_list, max_score=False):
+
+    config = {}
+    config['data_dir'] = data_dir
+    config['discrete_target'] = False
+    pairs = get_list_pairs(config, exp_list)
+
+    scores = get_scores(config, pairs, max_score=max_score)
+
+    return scores
 

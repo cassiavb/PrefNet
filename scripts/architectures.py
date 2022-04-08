@@ -5,7 +5,7 @@ from keras.models import Model
 from keras.layers import Input, Dense, TimeDistributed, \
                 UpSampling1D, Conv1D, ZeroPadding1D, Add, \
                 BatchNormalization, Activation, LeakyReLU, \
-                Dropout, Reshape, Lambda, Multiply, GRU, Permute, CuDNNGRU
+                Dropout, Reshape, Lambda, Multiply, GRU, Permute, CuDNNGRU, Bidirectional
 import keras.layers as layers 
 import keras.backend as K
 from tensorflow.keras import initializers
@@ -48,7 +48,7 @@ def get_linear_model(dim, activation=None):
 
     return model
 
-def get_encoder_model(input_dim=1, norm_data=False, include_gru=False, conv_dim = 40, enc_dim = 128, convlayers=6, convwidth=3, padding='same', dilation_rate=1, activation='relu', conv_type='1D', dropout_rate=0.0,L2regularizer=False):
+def get_encoder_model(input_dim=1, norm_data=False, include_gru=False, conv_dim = 40, enc_dim = 128, convlayers=6, convwidth=3, padding='same', dilation_rate=1, activation='relu', conv_type='1D', dropout_rate=0.0,L2regularizer=False, gru_output='last', gru_type='onedirectional'):
 
     data = Input(shape=(None, input_dim))
 
@@ -68,10 +68,28 @@ def get_encoder_model(input_dim=1, norm_data=False, include_gru=False, conv_dim 
 
     if include_gru:
 
-        transformed_data = CuDNNGRU(conv_dim, kernel_initializer=initialiser, recurrent_initializer='orthogonal', bias_initializer='zeros', \
-            kernel_regularizer=None, recurrent_regularizer=None, bias_regularizer=None, activity_regularizer=None, \
-            kernel_constraint=None, recurrent_constraint=None, bias_constraint=None, \
-            return_sequences=False, return_state=False, go_backwards=False, stateful=False)(transformed_data)
+        return_sequences = False
+        if gru_output=='average':
+            return_sequences = True
+
+        if gru_type == 'bidirectional':
+            print("Bidirectional GRU")
+            transformed_data = Bidirectional(CuDNNGRU(conv_dim, kernel_initializer=initialiser, recurrent_initializer='orthogonal', bias_initializer='zeros', \
+                kernel_regularizer=None, recurrent_regularizer=None, bias_regularizer=None, activity_regularizer=None, \
+                kernel_constraint=None, recurrent_constraint=None, bias_constraint=None, \
+                return_sequences=return_sequences, return_state=False, go_backwards=False, stateful=False))(transformed_data)
+        else:
+            print("Onedirectional GRU")
+            transformed_data = CuDNNGRU(conv_dim, kernel_initializer=initialiser, recurrent_initializer='orthogonal', bias_initializer='zeros', \
+                kernel_regularizer=None, recurrent_regularizer=None, bias_regularizer=None, activity_regularizer=None, \
+                kernel_constraint=None, recurrent_constraint=None, bias_constraint=None, \
+                return_sequences=return_sequences, return_state=False, go_backwards=False, stateful=False)(transformed_data)
+
+        if return_sequences:
+            print("Computing average of GRU output!")
+            transformed_data = layers.Lambda(lambda x: K.mean(x, axis=1)) (transformed_data)
+        else: # 'last'
+            print("Taking last element of GRU!")
 
     model = Model(inputs=data, outputs=transformed_data)
 
@@ -81,10 +99,15 @@ def get_encoder_model(input_dim=1, norm_data=False, include_gru=False, conv_dim 
 
     return model
 
-def get_predictor_model(input_dim=40, layers_size=[1], activation='linear', dropout_rate=0.0):
+def get_predictor_model(input_dim=40, layers_size=[1], activation='linear', dropout_rate=0.0, init='zeros'):
     '''
     Fully connected layer w sigmoid activation
     '''
+
+    if init=='zeros':
+        initializer = tf.keras.initializers.Zeros()
+    else:
+        initializer = "glorot_uniform"
 
     layers_size = np.asarray(layers_size, dtype=np.int)
     num_layers  = len(layers_size)
@@ -94,10 +117,10 @@ def get_predictor_model(input_dim=40, layers_size=[1], activation='linear', drop
     
     data = Input(shape=(input_dim, ))
 
-    transformed_data = Dense( units = layers_size[0], activation=activation)(data)
+    transformed_data = Dense( units = layers_size[0], activation=activation, kernel_initializer=initializer)(data)
 
     for ( subsequent_layer, layer_size ) in enumerate( layers_size[1:] ):
-        transformed_data = Dense( units = layer_size, activation=activation)(transformed_data)
+        transformed_data = Dense( units = layer_size, activation=activation, kernel_initializer=initializer)(transformed_data)
 
     model = Model(inputs=data, outputs=transformed_data)
 
@@ -133,13 +156,18 @@ def gru_and_attention_model(config, vocdim = 1, max_length=61280):
     else:
         include_gru = False
 
+    gru_joint = config.get('gru_joint','concatenate')
+    gru_type  = config.get('gru_type', 'onedirectional')
+     
     ## Define encoder model 
     encoder_model = get_encoder_model(input_dim=config.get('n_mels',40), norm_data=config.get('norm_enc_data',False), \
             enc_dim=config.get('dft_window', 512), convlayers=config.get('convlayers',2), \
             convwidth=config.get('convwidth',3), dilation_rate=config.get('dilation_rate',1), \
             conv_type=config.get('conv_type','1D'), dropout_rate=config.get('dropout_rate',0.0), \
             L2regularizer=config.get('L2regularizer',False), include_gru=include_gru, \
-            conv_dim=config.get('conv_dim', 64))
+            conv_dim=config.get('conv_dim', 64), \
+            gru_output=config.get('gru_output', 'last'), \
+            gru_type=gru_type)
 
     ## Multihead attention settings
     kv_dim   = int( config.get('conv_dim',40) / 2 )
@@ -151,9 +179,19 @@ def gru_and_attention_model(config, vocdim = 1, max_length=61280):
     ## Define predictor model
     fc_layers_size = np.asarray(config.get('fc_layers_size',[10,1]))
     if include_gru: # GRU based model
-        predictor_model = get_predictor_model(input_dim= 2*config.get('conv_dim',40), layers_size=fc_layers_size, activation=config.get('fc_activation', 'linear'))
+
+        if gru_joint == 'substract' or gru_joint == 'not-anti-siamese':
+            gru_dim = config.get('conv_dim',40)
+        else:
+            gru_dim = 2*config.get('conv_dim',40)
+        
+        if gru_type=='bidirectional':
+            gru_dim *= 2
+                
+        predictor_model = get_predictor_model(input_dim=gru_dim, layers_size=fc_layers_size, activation=config.get('fc_activation', 'linear'), init=config.get('fc_initialiser', 'glorot_uniform'))
+
     else: # Attention based model
-        predictor_model = get_predictor_model(input_dim= D_dim, layers_size=fc_layers_size, activation=config.get('fc_activation', 'linear'))
+        predictor_model = get_predictor_model(input_dim= D_dim, layers_size=fc_layers_size, activation=config.get('fc_activation', 'linear'), init=config.get('fc_initialiser', 'glorot_uniform') )
 
     ## Define linear transform models
     linear_model_K = get_linear_model(kv_dim)
@@ -171,16 +209,32 @@ def gru_and_attention_model(config, vocdim = 1, max_length=61280):
 
     if include_gru: # GRU based model
 
-        D = layers.concatenate([encoded_A , encoded_B], axis=1) # encoded is: None, D
+        if gru_joint == 'substract':
 
-        # Apply function to it
-        fAB = predictor_model( D ) # B x 1
-        DBA = layers.concatenate([encoded_B, encoded_A], axis=1)
-        fBA = predictor_model( DBA ) # B x 1
+            print('#### Subtraction')
+            D = layers.subtract([encoded_A , encoded_B])
+            fAB = predictor_model( D )
+            DBA = layers.Lambda(lambda x: tf.negative(x))(D)
+            fBA = predictor_model( DBA ) # B x 1
+
+        elif gru_joint == 'not-anti-siamese':
+
+            print('#### Subtraction but not anti-siamese')
+            fAB = predictor_model( encoded_A )
+            fBA = predictor_model( encoded_B )
+
+        else:
+
+            print('#### Concatenation')
+            D = layers.concatenate([encoded_A , encoded_B], axis=1)
+            fAB = predictor_model( D )
+            DBA = layers.concatenate([encoded_B, encoded_A], axis=1)
+            fBA = predictor_model( DBA )
 
         # Sum and apply sigmoid
         fABBA = layers.subtract([ fAB, fBA ])
         prob  = layers.Activation('sigmoid')(fABBA)
+
 
     else: # Attention based model
 
@@ -257,6 +311,7 @@ def gru_and_attention_model(config, vocdim = 1, max_length=61280):
         print(model.summary())
 
     return model
+
 
 
 

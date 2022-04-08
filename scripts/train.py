@@ -127,8 +127,8 @@ def train_configuration(config):
         print("----- Training fold " + str(fold))
 
         # Training settings
-        optimizer = optimizers.Adam(lr=config.get('learning_rate',0.001))
-        #optimizer = optimizers.SGD(lr=config.get('learning_rate',0.001), momentum=0.0, decay=config.get('learning_rate_decay',0.0), nesterov=False)
+        lr = config.get('learning_rate',0.001)
+        optimizer = optimizers.Adam(lr=lr)
         model.compile(optimizer=optimizer, loss='mse')
 
         # Bucketing sequence with multiple inputs -- doesnt work well with inputs of two diff sizes
@@ -142,9 +142,67 @@ def train_configuration(config):
             callback_list.append(checkpoint)
 
         print("Start training")
-        hist = model.fit_generator(train_generator, epochs=config.get('epochs',2), validation_data=val_generator, callbacks=callback_list, shuffle=True, verbose=1)
-        array_to_binary_file(hist.history['loss'], config['model_dir'] + '/' + str(fold) + '_train_loss.float')
-        array_to_binary_file(hist.history['val_loss'], config['model_dir'] + '/' + str(fold) + '_val_loss.float')
+
+        # Train all epochs
+        # hist = model.fit_generator(train_generator, epochs=config.get('epochs',2), validation_data=val_generator, callbacks=callback_list, shuffle=True, verbose=1)
+
+        # # Train epoch by epoch to stop if not converged
+        # hist_train_loss, hist_val_loss = [], []
+        # for epoch in range(config.get('epochs',2)):
+        #     hist = model.fit_generator(train_generator, initial_epoch=epoch, epochs=epoch+1, validation_data=val_generator, callbacks=callback_list, shuffle=True, verbose=1)
+        #     train_loss = float(hist.history['loss'][-1])
+        #     val_loss = float(hist.history['val_loss'][-1])
+        #     hist_train_loss.append(train_loss)
+        #     hist_val_loss.append(val_loss)
+        #     if epoch==0:
+        #         if train_loss >= 0.1:
+        #             print(f"Model didnt converge, stop trainning!")
+        #             break
+        # hist_train_loss = np.array(hist_train_loss)
+        # hist_val_loss = np.array(hist_val_loss)
+        # array_to_binary_file(hist_train_loss, config['model_dir'] + '/' + str(fold) + '_train_loss.float')
+        # array_to_binary_file(hist_val_loss, config['model_dir'] + '/' + str(fold) + '_val_loss.float')
+
+
+        # Keep training until it converges
+        not_converged = True
+        attempts = 1
+        while not_converged:
+            hist_train_loss, hist_val_loss = [], []
+            
+            if attempts>1:
+
+                model = None
+                model = architectures.gru_and_attention_model( config , vocdim = config['n_mels'], max_length = max_length)
+
+                if adapt_model: # Loading existing model -- for adaptation!!
+                    print("Load existing model for adaptation")
+                    model.load_weights(model_file)
+                    
+                model.compile(optimizer=optimizer, loss='mse')
+
+            for epoch in range(config.get('epochs',2)):
+                hist = model.fit_generator(train_generator, initial_epoch=epoch, epochs=epoch+1, validation_data=val_generator, callbacks=callback_list, shuffle=True, verbose=1)
+                train_loss = float(hist.history['loss'][-1])
+                val_loss   = float(hist.history['val_loss'][-1])
+                hist_train_loss.append(train_loss)
+                hist_val_loss.append(val_loss)
+                if epoch==0:
+                    if train_loss >= 0.11:
+                        print(f"Model didnt converge, stop trainning!")
+                        break
+                    else:
+                        not_converged = False
+            if attempts == 10:
+                print(f"Model didnt converge -- TOO MANY ATTEMPTS!")
+                not_converged = False
+            attempts +=1
+
+        hist_train_loss = np.array(hist_train_loss)
+        hist_val_loss = np.array(hist_val_loss)
+        array_to_binary_file(hist_train_loss, config['model_dir'] + '/' + str(fold) + '_train_loss.float')
+        array_to_binary_file(hist_val_loss, config['model_dir'] + '/' + str(fold) + '_val_loss.float')
+
     
         if not config['early_stopping']:
             print("Saving model file: " + model_file)
@@ -168,4 +226,5 @@ if __name__=="__main__":
     config = load_config(opts.config_fname)
 
     train_configuration(config)
+
 
