@@ -1,8 +1,8 @@
 # PrefNet
 
-This repository contains code, pre-trained models and data for the following Interspeech 2022 submission:
+This repository contains code, pre-trained models and data for the following Interspeech 2022 paper:
 
-"Predicting pairwise preferences between TTS audio stimuli using parallel ratings data and anti-symmetric twin neural networks"  
+["Predicting pairwise preferences between TTS audio stimuli using parallel ratings data and anti-symmetric twin neural networks"](https://www.isca-archive.org/interspeech_2022/valentinibotinhao22_interspeech.pdf)  
 Cassia Valentini-Botinhao, Manuel Sam Ribeiro, Oliver Watts, Korin Richmond, Gustav Eje Henter
 
 ## Installation
